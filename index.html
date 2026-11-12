@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Go Down Stair — Lightman's Game</title>
+<style>
+html,body{margin:0;background:#000;font-family:"Press Start 2P",monospace;color:#bfbfbf;}
+#gameWrap{display:flex;justify-content:center;align-items:flex-start;padding:8px;}
+#gameCard{width:480px;background:#000;border:4px solid #111;padding:8px;border-radius:6px;box-sizing:border-box;position:relative;}
+header{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;}
+.brand{color:#7aff7a;font-size:12px;}
+.clock{color:#9f9f9f;font-size:11px;}
+.title{text-align:center;color:#dfefff;font-weight:bold;margin:4px 0;font-size:16px;}
+#gameCanvas{width:100%;background:#000;display:block;border:3px solid #111;}
+.ui-overlay{position:absolute;left:0;right:0;pointer-events:none;}
+.centerOverlay{position:absolute;top:45%;left:0;right:0;text-align:center;pointer-events:auto;}
+.bigButton{padding:8px 14px;background:#7aff7a;color:#041204;font-weight:bold;border-radius:6px;border:2px solid #071207;cursor:pointer;}
+.bigButton.blue{background:#3aa0ff;color:#fff;border:2px solid #1f5f99;}
+.bigButton.red{background:#ff0000;color:#fff;border:2px solid #aa0000;}
+.hud{position:absolute;top:6px;left:6px;color:#9fffbf;font-size:11px;}
+.timeHud{position:absolute;top:6px;right:60px;color:#9f9fbf;font-size:11px;}
+footer{text-align:center;color:#8f8f8f;font-size:11px;margin-top:4px;}
+.diffSelect{margin-top:6px;font-size:11px;color:#9f9f9f;}
+#stopBtn{position:absolute;top:6px;right:6px;padding:4px 8px;font-size:10px;background:#ff5555;color:#000;border:none;border-radius:4px;cursor:pointer;}
+#pauseScreen{display:none;position:absolute;top:0;left:0;width:100%;height:100%;
+ background:rgba(0,0,0,0.8);color:#fff;display:flex;flex-direction:column;
+ justify-content:center;align-items:center;}
+</style>
+</head>
+<body>
+<div id="gameWrap">
+  <div id="gameCard">
+    <header>
+      <div class="brand">Lightman's Game</div>
+      <div class="clock" id="clock">00:00</div>
+    </header>
+    <div class="title">Go Down Stair</div>
+    <canvas id="gameCanvas" width="480" height="600"></canvas>
+
+    <div class="ui-overlay">
+      <div class="hud" id="hudFloors">Floor: 0 / 100</div>
+      <div class="timeHud" id="hudTime">00:00</div>
+      <button id="stopBtn">Stop</button>
+    </div>
+
+    <div class="centerOverlay" id="startScreen">
+      <div style="margin-bottom:8px;color:#dfefff;font-weight:bold;font-size:14px;">GO DOWN STAIR</div>
+      <button class="bigButton" id="startBtn">Start</button>
+      <div class="diffSelect">Difficulty:
+        <select id="difficulty">
+          <option>Normal</option><option>Easy</option><option>Hard</option><option>Crazy</option>
+        </select>
+      </div>
+      <div style="margin-top:6px;font-size:11px;color:#9f9f9f;">A/D or ←/→ move • Space jump • Touch/Swipe mobile</div>
+    </div>
+
+    <div class="centerOverlay" id="gameOverScreen" style="display:none">
+      <div style="background:#111;padding:8px;border-radius:6px;border:2px solid #222;color:#fff;">
+        <div id="gameOverText" style="font-size:14px;font-weight:bold;margin-bottom:4px;">Game Over</div>
+        <div id="gameOverReason" style="font-size:11px;margin-bottom:6px;"></div>
+        <div id="bestStats" style="font-size:11px;margin-bottom:6px;"></div>
+        <button class="bigButton" id="restartBtn">Restart</button>
+      </div>
+    </div>
+
+    <div id="pauseScreen">
+      <div style="background:#111;padding:12px;border-radius:6px;border:2px solid #222;text-align:center;">
+        <div style="font-size:14px;font-weight:bold;margin-bottom:8px;">Paused</div>
+        <button class="bigButton blue" id="continueBtn">Continue</button>
+        <button class="bigButton red" id="exitBtn" style="margin-top:8px;">Exit</button>
+      </div>
+    </div>
+
+    <footer>Made with ❤️ — Lightman Lyu</footer>
+  </div>
+</div>
+
+<script>
+const canvas=document.getElementById('gameCanvas'),ctx=canvas.getContext('2d');
+let W=canvas.width,H=canvas.height;
+
+let keys={},touching=false,startX=0;
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(e.key==='Enter') togglePause();
+});
+document.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+canvas.addEventListener('touchstart',e=>{touching=true;startX=e.touches[0].clientX});
+canvas.addEventListener('touchend',e=>{touching=false;keys[' '] = true;});
+canvas.addEventListener('touchmove',e=>{
+  if(!touching)return;
+  const dx=e.touches[0].clientX-startX;
+  if(dx>20)keys['d']=true,keys['a']=false;
+  else if(dx<-20)keys['a']=true,keys['d']=false;
+});
+
+const TOTAL_FLOORS=100;
+let floorHeights=[],totalHeight=0;
+function rand(a,b){return Math.random()*(b-a)+a;}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+function fmt(ms){const s=Math.floor(ms/1000),m=Math.floor(s/60),ss=s%60;return `${String(m).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;}
+
+const DIFFS={
+  Easy : {spd:0.8,g:0.4,jump:-8,width:[90,85],gap:[20,35],spike:0.08},
+  Normal:{spd:1.1,g:0.5,jump:-9,width:[60,75],gap:[20,40],spike:0.15},
+  Hard : {spd:1.6,g:0.6,jump:-10,width:[50,60],gap:[25,50],spike:0.25,meteor:true},
+  Crazy:{spd:3.2,g:0.7,jump:-10,width:[30,45],gap:[25,55],spike:0.6,meteor:true,bullet:true}
+};
+
+let diff=DIFFS.Normal;
+let platforms=[],player=null,landedFloors=0,gameRunning=false,paused=false,gameOver=false,startTime,elapsedMs=0;
+let bestTime=parseInt(localStorage.getItem('bestTime'))||null,bestFloor=parseInt(localStorage.getItem('bestFloor'))||0;
+let meteors=[],bullets=[];
+let bulletFrameCounter = 0;
+
+function buildFloors(){floorHeights=[];totalHeight=0;for(let i=0;i<TOTAL_FLOORS;i++){floorHeights.push(rand(200,350));totalHeight+=floorHeights[i];}}
+function createPlatforms(){
+  platforms=[];let y=H+40;
+  for(let f=0;f<TOTAL_FLOORS;f++){
+    let num=(document.getElementById('difficulty').value==='Crazy')?rand(5,15):rand(10,30);
+    for(let i=0;i<num;i++){
+      const w=rand(diff.width[0],diff.width[1]);
+      const x=rand(10,W-w-10);
+      let spikeChance = (f===0)?0:diff.spike;
+      platforms.push({x,y,w,spike:Math.random()<spikeChance,floor:f});
+      y+=rand(diff.gap[0],diff.gap[1]);
+    }
+    y+=floorHeights[f]/10;
+  }
+}
+function createPlayer(){const first=platforms[0];return {x:first.x+first.w/2-6,y:first.y-28,vx:0,vy:0,w:14,h:28,onGround:true,color:'#3aa0ff',floor:0};}
+function resetGame(){buildFloors();createPlatforms();player=createPlayer();landedFloors=0;meteors=[];bullets=[];gameRunning=false;paused=false;gameOver=false;startTime=null;elapsedMs=0;document.getElementById('startScreen').style.display='block';document.getElementById('gameOverScreen').style.display='none';document.getElementById('pauseScreen').style.display='none';}
+function startGame(){gameRunning=true;startTime=Date.now();document.getElementById('startScreen').style.display='none';}
+function endGame(reason){gameRunning=false;gameOver=true;document.getElementById('gameOverText').textContent=landedFloors>=TOTAL_FLOORS?'You Win!':'Game Over';document.getElementById('gameOverReason').textContent=reason;if(landedFloors>bestFloor){bestFloor=landedFloors;localStorage.setItem('bestFloor',bestFloor);}if(landedFloors>=TOTAL_FLOORS && (!bestTime || elapsedMs<bestTime)){bestTime=elapsedMs;localStorage.setItem('bestTime',elapsedMs);}const bestTimeText=bestTime?fmt(bestTime):'--:--';document.getElementById('bestStats').textContent=`Best Floor: ${bestFloor}   Best Time: ${bestTimeText}`;document.getElementById('gameOverScreen').style.display='block';}
+function togglePause(){if(!gameRunning || gameOver) return;paused=!paused;document.getElementById('pauseScreen').style.display=paused?'flex':'none';}
+
+function update(){
+  elapsedMs=Date.now()-startTime;
+  document.getElementById('hudTime').textContent=fmt(elapsedMs);
+  document.getElementById('clock').textContent=fmt(elapsedMs);
+
+  if(keys['a']||keys['arrowleft'])player.vx=clamp(player.vx-0.4,-3.5,3.5);
+  else if(keys['d']||keys['arrowright'])player.vx=clamp(player.vx+0.4,-3.5,3.5);
+  else player.vx*=0.85;
+
+  if((keys[' ']||keys['space'])&&player.onGround){player.vy=diff.jump;player.onGround=false;keys[' ']=false;keys['space']=false;}
+
+  let speed = diff.spd;
+
+  if(diff.meteor && Math.random()<0.01){meteors.push({x:rand(20,W-20),y:-20,r:10+rand(0,10),vy:rand(2,5)});}
+
+  if(diff.bullet){
+    bulletFrameCounter++;
+    if(bulletFrameCounter>=30){ // 隨機機率生成，但每半秒最多一次
+      if(Math.random()<0.3){ // 30% 機率生成
+        bullets.push({x:-20,y:rand(100,H-50),w:20,h:4,vx:4+rand(0,2)});
+      }
+      bulletFrameCounter=0;
+    }
+  }
+
+  player.vy+=diff.g;player.x+=player.vx;player.y+=player.vy;
+  if(player.x<0)player.x=0;if(player.x+player.w>W)player.x=W-player.w;
+
+  for(let p of platforms){
+    p.y-=speed;
+    if(player.vy>=0 && player.y+player.h<=p.y+10 && player.y+player.h>=p.y-10 && player.x+player.w>p.x && player.x<p.x+p.w){
+      if(p.spike){endGame('Stepped on spikes');return;}
+      player.y=p.y-player.h;player.vy=0;player.onGround=true;
+      if(p.floor>player.floor){player.floor=p.floor;landedFloors=p.floor;}
+    }
+  }
+
+  for(let m of meteors){
+    m.y+=m.vy;if(m.y>H+20)m.dead=true;
+    if(Math.hypot(player.x+player.w/2-m.x,player.y+player.h/2-m.y)<m.r+10){endGame('Hit by meteor');return;}
+  }
+  meteors=meteors.filter(m=>!m.dead);
+
+  for(let b of bullets){
+    b.x+=b.vx;
+    if(b.x>W) b.dead=true;
+    if(player.x < b.x + b.w && player.x + player.w > b.x &&
+       player.y < b.y + b.h && player.y + player.h > b.y){
+      endGame('Hit by bullet'); return;
+    }
+  }
+  bullets=bullets.filter(b=>!b.dead);
+
+  if(player.y<0)endGame('Pushed to top');if(player.y>H+40)endGame('Fell down');
+  document.getElementById('hudFloors').textContent=`Floor: ${landedFloors} / ${TOTAL_FLOORS}`;
+  if(landedFloors>=TOTAL_FLOORS)endGame('Reached 100 floors');
+}
+
+function render(){
+  ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
+  for(let p of platforms){if(p.y<-20||p.y>H+60)continue;ctx.fillStyle='#fff';ctx.fillRect(p.x,p.y,p.w,6);
+    if(p.spike){ctx.fillStyle='#fff';for(let x=p.x;x<p.x+p.w;x+=8){ctx.beginPath();ctx.moveTo(x,p.y);ctx.lineTo(x+4,p.y-8);ctx.lineTo(x+8,p.y);ctx.fill();}}
+  }
+  ctx.fillStyle='#f33';for(let m of meteors){ctx.beginPath();ctx.arc(m.x,m.y,m.r,0,Math.PI*2);ctx.fill();}
+  ctx.fillStyle='#ff0';for(let b of bullets){ctx.fillRect(b.x,b.y,b.w,b.h);}
+  ctx.save();ctx.translate(player.x+player.w/2,player.y);ctx.fillStyle=player.color;ctx.beginPath();ctx.arc(0,6,4,0,Math.PI*2);ctx.fill();ctx.fillRect(-1,10,2,14);ctx.fillRect(-8,14,16,2);ctx.fillRect(-6,24,4,2);ctx.fillRect(2,24,4,2);ctx.restore();
+}
+
+function loop(){if(gameRunning && !paused)update();render();requestAnimationFrame(loop);}
+
+document.getElementById('difficulty').addEventListener('change',e=>{diff=DIFFS[e.target.value];});
+document.getElementById('startBtn').onclick=()=>{startGame();};
+document.getElementById('restartBtn').onclick=()=>{resetGame();};
+document.getElementById('stopBtn').onclick=()=>togglePause();
+document.getElementById('continueBtn').onclick=()=>togglePause();
+document.getElementById('exitBtn').onclick=()=>{resetGame();};
+
+resetGame();loop();
+</script>
+</body>
+</html>
+
